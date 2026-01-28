@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.22'
   AWS_REGION: eu-north-1
   ECR_REPOSITORY: starttech-backend
 
@@ -60,7 +60,8 @@ jobs:
       - name: Run Unit Tests
         working-directory: Server/MuchToDo
         run: |
-          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          go test -v -race ./...
+          go test -coverprofile=coverage.out -covermode=atomic ./...
           go tool cover -func=coverage.out
 
       - name: Upload Coverage
@@ -128,7 +129,7 @@ jobs:
           if [ ! -f Dockerfile ]; then
             echo "Creating Dockerfile..."
             cat > Dockerfile << 'EOF'
-          FROM golang:1.21-alpine AS builder
+          FROM golang:1.22-alpine AS builder
           
           WORKDIR /app
           COPY go.mod go.sum ./
