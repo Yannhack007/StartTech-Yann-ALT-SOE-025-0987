@@ -5,13 +5,13 @@ on:
     branches:
       - main
     paths:
-      - 'backend/**'
+      - 'Server/MuchToDo/**'
       - '.github/workflows/backend-ci-cd.yml'
   pull_request:
     branches:
       - main
     paths:
-      - 'backend/**'
+      - 'Server/MuchToDo/**'
   workflow_dispatch:
 
 env:
@@ -31,22 +31,22 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: Server/MuchToDo/go.sum
 
       - name: Install Dependencies
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: go mod download
 
       - name: Verify Dependencies
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: go mod verify
 
       - name: Run Go Vet
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: go vet ./...
 
       - name: Run Go Fmt Check
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: |
           UNFORMATTED=$(gofmt -s -l .)
           if [ -n "$UNFORMATTED" ]; then
@@ -58,7 +58,7 @@ jobs:
           echo "All files are properly formatted"
 
       - name: Run Unit Tests
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: |
           go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
           go tool cover -func=coverage.out
@@ -67,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
-          path: backend/coverage.out
+          path: Server/MuchToDo/coverage.out
           retention-days: 7
 
   security-scan:
@@ -86,13 +86,13 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Run Gosec Security Scanner
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: |
           gosec -fmt json -out gosec-results.json -no-fail ./...
           gosec ./... || echo "Security issues found but continuing..."
 
       - name: Check for vulnerabilities with govulncheck
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./... || echo "Vulnerabilities found but continuing..."
@@ -123,7 +123,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Create Dockerfile if not exists
-        working-directory: backend
+        working-directory: Server/MuchToDo
         run: |
           if [ ! -f Dockerfile ]; then
             echo "Creating Dockerfile..."
@@ -135,7 +135,7 @@ jobs:
           RUN go mod download
           
           COPY . .
-          RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+          RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/api
           
           FROM alpine:latest
           RUN apk --no-cache add ca-certificates
@@ -151,7 +151,7 @@ jobs:
 
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
-        working-directory: backend
+        working-directory: Server/MuchToDo
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -179,7 +179,6 @@ jobs:
     name: Deploy to EC2 Auto Scaling
     runs-on: ubuntu-latest
     needs: build-and-push
-    environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -190,6 +189,10 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Create User Data Script
         run: |
