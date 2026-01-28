@@ -1,8 +1,8 @@
 package models
 
 import (
-	"time" // Import the standard time package
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"time" // Import the standard time package
 )
 
 // Todo represents a single task in the ToDo list.
@@ -28,4 +28,3 @@ type UpdateTodoDTO struct {
 	Description *string `json:"description"`
 	Completed   *bool   `json:"completed"`
 }
-

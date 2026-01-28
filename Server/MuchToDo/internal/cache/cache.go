@@ -7,8 +7,8 @@ import (
 	// "strconv"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/Innocent9712/much-to-do/Server/MuchToDo/internal/config"
+	"github.com/redis/go-redis/v9"
 )
 
 // Cache defines the interface for a caching service.
@@ -122,4 +122,3 @@ func (n *NoOpCache) Delete(ctx context.Context, key string) error {
 func (n *NoOpCache) Ping(ctx context.Context) error {
 	return nil
 }
-
