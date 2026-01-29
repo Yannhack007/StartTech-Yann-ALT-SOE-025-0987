@@ -123,33 +123,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create Dockerfile if not exists
-        working-directory: Server/MuchToDo
-        run: |
-          if [ ! -f Dockerfile ]; then
-            echo "Creating Dockerfile..."
-            cat > Dockerfile << 'EOF'
-          FROM golang:1.22-alpine AS builder
-          
-          WORKDIR /app
-          COPY go.mod go.sum ./
-          RUN go mod download
-          
-          COPY . .
-          RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/api
-          
-          FROM alpine:latest
-          RUN apk --no-cache add ca-certificates
-          WORKDIR /root/
-          
-          COPY --from=builder /app/main .
-          
-          EXPOSE 8080
-          
-          CMD ["./main"]
-          EOF
-          fi
-
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         working-directory: Server/MuchToDo
@@ -196,8 +169,18 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Create User Data Script
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          REDIS_ADDR: ${{ secrets.REDIS_ADDR }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          ENABLE_CACHE: ${{ secrets.ENABLE_CACHE || 'false' }}
+          ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS || 'http://localhost:5173' }}
+          COOKIE_DOMAINS: ${{ secrets.COOKIE_DOMAINS || 'localhost' }}
+          SECURE_COOKIE: ${{ secrets.SECURE_COOKIE || 'false' }}
         run: |
-          cat > user-data.sh << 'USERDATA'
+          cat > user-data.sh << USERDATA
           #!/bin/bash
           set -e
           
@@ -215,23 +198,33 @@ jobs:
           rpm -U ./amazon-cloudwatch-agent.rpm
           
           # Get ECR login
-          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
           
           # Pull and run container
-          docker pull ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+          docker pull ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
           
-          docker run -d \
-            --name backend \
-            --restart always \
-            -p 8080:8080 \
-            --log-driver=awslogs \
-            --log-opt awslogs-group=/aws/ec2/starttech-backend \
-            --log-opt awslogs-region=${AWS_REGION} \
-            --log-opt awslogs-create-group=true \
-            -e MONGODB_URI="${MONGODB_URI}" \
-            -e REDIS_ENDPOINT="${REDIS_ENDPOINT}" \
-            -e PORT=8080 \
-            ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+          docker run -d \\
+            --name backend \\
+            --restart always \\
+            -p 8080:8080 \\
+            --log-driver=awslogs \\
+            --log-opt awslogs-group=/aws/ec2/starttech-backend \\
+            --log-opt awslogs-region=${{ env.AWS_REGION }} \\
+            --log-opt awslogs-create-group=true \\
+            -e MONGO_URI="${MONGO_URI}" \\
+            -e DB_NAME="much_todo_db" \\
+            -e REDIS_ADDR="${REDIS_ADDR}" \\
+            -e REDIS_PASSWORD="${REDIS_PASSWORD}" \\
+            -e ENABLE_CACHE="${ENABLE_CACHE}" \\
+            -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \\
+            -e JWT_EXPIRATION_HOURS=72 \\
+            -e PORT=8080 \\
+            -e LOG_LEVEL="INFO" \\
+            -e LOG_FORMAT="json" \\
+            -e ALLOWED_ORIGINS="${ALLOWED_ORIGINS}" \\
+            -e COOKIE_DOMAINS="${COOKIE_DOMAINS}" \\
+            -e SECURE_COOKIE="${SECURE_COOKIE}" \\
+            ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
           
           echo "Backend container started successfully"
           USERDATA
