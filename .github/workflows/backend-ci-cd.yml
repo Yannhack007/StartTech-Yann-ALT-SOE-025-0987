@@ -71,6 +71,63 @@ jobs:
           path: Server/MuchToDo/coverage.out
           retention-days: 7
 
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: example
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: Server/MuchToDo/go.sum
+
+      - name: Install Dependencies
+        working-directory: Server/MuchToDo
+        run: go mod download
+
+      - name: Run Integration Tests
+        working-directory: Server/MuchToDo
+        env:
+          INTEGRATION: "1"
+          MONGO_URI: mongodb://root:example@localhost:27017/?authSource=admin
+          REDIS_ADDR: localhost:6379
+        run: |
+          go test -v -tags=integration -coverprofile=integration-coverage.out ./...
+          
+      - name: Upload Integration Coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage
+          path: Server/MuchToDo/integration-coverage.out
+          retention-days: 7
+
   security-scan:
     name: Security Scanning
     runs-on: ubuntu-latest
@@ -101,7 +158,7 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [test, security-scan]
+    needs: [test, integration-test, security-scan]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:
       image-uri: ${{ steps.build-image.outputs.image }}
