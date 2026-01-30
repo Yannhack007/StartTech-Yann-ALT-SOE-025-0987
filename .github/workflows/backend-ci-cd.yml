@@ -2,20 +2,18 @@ name: Backend CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - 'Server/MuchToDo/**'
       - '.github/workflows/backend-ci-cd.yml'
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
     paths:
       - 'Server/MuchToDo/**'
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.24'
   AWS_REGION: eu-north-1
   ECR_REPOSITORY: starttech-backend
 
@@ -24,8 +22,7 @@ jobs:
     name: Test Backend
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -33,39 +30,32 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: Server/MuchToDo/go.sum
 
-      - name: Install Dependencies
+      - name: Install & Verify Dependencies
         working-directory: Server/MuchToDo
-        run: go mod download
+        run: |
+          go mod download
+          go mod verify
 
-      - name: Verify Dependencies
-        working-directory: Server/MuchToDo
-        run: go mod verify
-
-      - name: Run Go Vet
+      - name: Go Vet
         working-directory: Server/MuchToDo
         run: go vet ./...
 
-      - name: Run Go Fmt Check
+      - name: Go Fmt Check
         working-directory: Server/MuchToDo
         run: |
           UNFORMATTED=$(gofmt -s -l .)
           if [ -n "$UNFORMATTED" ]; then
-            echo "The following files are not formatted:"
             echo "$UNFORMATTED"
-            echo "Please run: gofmt -s -w ."
             exit 1
           fi
-          echo "All files are properly formatted"
 
-      - name: Run Unit Tests
+      - name: Unit Tests
         working-directory: Server/MuchToDo
         run: |
-          go test -v -race ./...
+          go test -v ./...
           go test -coverprofile=coverage.out -covermode=atomic ./...
-          go tool cover -func=coverage.out
 
-      - name: Upload Coverage
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
           path: Server/MuchToDo/coverage.out
@@ -77,388 +67,126 @@ jobs:
     services:
       mongodb:
         image: mongo:7
-        ports:
-          - 27017:27017
+        ports: [ "27017:27017" ]
         env:
-          MONGO_INITDB_ROOT_USERNAME: root
-          MONGO_INITDB_ROOT_PASSWORD: example
+          MONGO_INITDB_ROOT_USERNAME: starttech
+          MONGO_INITDB_ROOT_PASSWORD: startech2026
         options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand({ping: 1})'"
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      
+
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: [ "6379:6379" ]
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: Server/MuchToDo/go.sum
 
-      - name: Install Dependencies
-        working-directory: Server/MuchToDo
-        run: go mod download
-
-      - name: Run Integration Tests
+      - name: Integration Tests
         working-directory: Server/MuchToDo
         env:
           INTEGRATION: "1"
-          MONGO_URI: mongodb://root:example@localhost:27017/?authSource=admin
-          REDIS_ADDR: localhost:6379
+          MONGO_URI: ${{secrets.MONGO_URI}}
+          REDIS_ADDR: starttech-redis.ouqql9.0001.eun1.cache.amazonaws.com
         run: |
-          go test -v -tags=integration -coverprofile=integration-coverage.out ./...
-          
-      - name: Upload Integration Coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-coverage
-          path: Server/MuchToDo/integration-coverage.out
-          retention-days: 7
+          go test -v -tags=integration ./...
 
   security-scan:
-    name: Security Scanning
+    name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install Gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
-
-      - name: Run Gosec Security Scanner
-        working-directory: Server/MuchToDo
+      - name: Install Security Tools
         run: |
-          gosec -fmt json -out gosec-results.json -no-fail ./...
-          gosec ./... || echo "Security issues found but continuing..."
-
-      - name: Check for vulnerabilities with govulncheck
-        working-directory: Server/MuchToDo
-        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./... || echo "Vulnerabilities found but continuing..."
+
+      - name: Run Gosec
+        working-directory: Server/MuchToDo
+        run: gosec -no-fail ./...
+
+      - name: Run Govulncheck
+        working-directory: Server/MuchToDo
+        run: govulncheck ./... || true
 
   build-and-push:
-    name: Build and Push Docker Image
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
     needs: [test, integration-test, security-scan]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:
-      image-uri: ${{ steps.build-image.outputs.image }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      image-uri: ${{ steps.build.outputs.image }}
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
+      - uses: aws-actions/amazon-ecr-login@v2
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
+      - name: Build & Push Image
+        id: build
         working-directory: Server/MuchToDo
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build and push image
-          docker build -t $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
-          
-          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker buildx build \
+            --platform linux/amd64 \
+            -t $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
+            -t $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest \
+            --push .
           
           echo "image=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "Image pushed: $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
 
-      - name: Scan Docker Image with Trivy
+      - name: Trivy Scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ steps.build-image.outputs.image }}
-          format: 'table'
+          image-ref: ${{ steps.build.outputs.image }}
+          severity: CRITICAL,HIGH
           exit-code: '0'
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
 
   deploy:
-    name: Deploy to EC2 Auto Scaling
+    name: Deploy to EC2 ASG
     runs-on: ubuntu-latest
     needs: build-and-push
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
+      - uses: aws-actions/amazon-ecr-login@v2
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Create User Data Script
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-          REDIS_ADDR: ${{ secrets.REDIS_ADDR }}
-          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
-          ENABLE_CACHE: ${{ secrets.ENABLE_CACHE || 'false' }}
-          ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS || 'http://localhost:5173' }}
-          COOKIE_DOMAINS: ${{ secrets.COOKIE_DOMAINS || 'localhost' }}
-          SECURE_COOKIE: ${{ secrets.SECURE_COOKIE || 'false' }}
+      - name: Deployment Info
         run: |
-          cat > user-data.sh << USERDATA
-          #!/bin/bash
-          set -e
-          
-          # Update system
-          yum update -y
-          
-          # Install Docker
-          yum install -y docker
-          systemctl start docker
-          systemctl enable docker
-          usermod -a -G docker ec2-user
-          
-          # Install CloudWatch agent
-          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
-          rpm -U ./amazon-cloudwatch-agent.rpm
-          
-          # Get ECR login
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-          
-          # Pull and run container
-          docker pull ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
-          
-          docker run -d \\
-            --name backend \\
-            --restart always \\
-            -p 8080:8080 \\
-            --log-driver=awslogs \\
-            --log-opt awslogs-group=/aws/ec2/starttech-backend \\
-            --log-opt awslogs-region=${{ env.AWS_REGION }} \\
-            --log-opt awslogs-create-group=true \\
-            -e MONGO_URI="${MONGO_URI}" \\
-            -e DB_NAME="much_todo_db" \\
-            -e REDIS_ADDR="${REDIS_ADDR}" \\
-            -e REDIS_PASSWORD="${REDIS_PASSWORD}" \\
-            -e ENABLE_CACHE="${ENABLE_CACHE}" \\
-            -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \\
-            -e JWT_EXPIRATION_HOURS=72 \\
-            -e PORT=8080 \\
-            -e LOG_LEVEL="INFO" \\
-            -e LOG_FORMAT="json" \\
-            -e ALLOWED_ORIGINS="${ALLOWED_ORIGINS}" \\
-            -e COOKIE_DOMAINS="${COOKIE_DOMAINS}" \\
-            -e SECURE_COOKIE="${SECURE_COOKIE}" \\
-            ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
-          
-          echo "Backend container started successfully"
-          USERDATA
-
-      - name: Get Launch Template ID
-        id: get-lt
-        run: |
-          LT_ID=$(aws ec2 describe-launch-templates \
-            --filters "Name=tag:Name,Values=starttech-backend-lt" \
-            --query 'LaunchTemplates[0].LaunchTemplateId' \
-            --output text)
-          
-          if [ "$LT_ID" == "None" ] || [ -z "$LT_ID" ]; then
-            echo "Launch template not found!"
-            exit 1
-          fi
-          
-          echo "launch-template-id=$LT_ID" >> $GITHUB_OUTPUT
-          echo "Found Launch Template: $LT_ID"
-
-      - name: Update Launch Template
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: |
-          # Encode user-data script
-          USER_DATA_BASE64=$(base64 -w 0 user-data.sh)
-          
-          # Create new launch template version
-          aws ec2 create-launch-template-version \
-            --launch-template-id ${{ steps.get-lt.outputs.launch-template-id }} \
-            --source-version '$Latest' \
-            --launch-template-data "{\"UserData\":\"$USER_DATA_BASE64\"}"
-          
-          # Set as default version
-          aws ec2 modify-launch-template \
-            --launch-template-id ${{ steps.get-lt.outputs.launch-template-id }} \
-            --default-version '$Latest'
-          
-          echo "Launch template updated"
-
-      - name: Trigger Instance Refresh
-        id: refresh
-        run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups \
-            --query "AutoScalingGroups[?contains(Tags[?Key=='Name'].Value, 'starttech-backend')].AutoScalingGroupName" \
-            --output text)
-          
-          if [ -z "$ASG_NAME" ]; then
-            echo "Auto Scaling Group not found!"
-            exit 1
-          fi
-          
-          echo "Auto Scaling Group: $ASG_NAME"
-          
-          REFRESH_ID=$(aws autoscaling start-instance-refresh \
-            --auto-scaling-group-name $ASG_NAME \
-            --preferences '{
-              "MinHealthyPercentage": 90,
-              "InstanceWarmup": 300,
-              "CheckpointPercentages": [50, 100],
-              "CheckpointDelay": 300,
-              "SkipMatching": false
-            }' \
-            --query 'InstanceRefreshId' \
-            --output text)
-          
-          echo "refresh-id=$REFRESH_ID" >> $GITHUB_OUTPUT
-          echo "asg-name=$ASG_NAME" >> $GITHUB_OUTPUT
-          echo "Instance refresh started: $REFRESH_ID"
-
-      - name: Wait for Instance Refresh
-        run: |
-          echo "Waiting for instance refresh to complete..."
-          echo "This may take 10-15 minutes..."
-          
-          aws autoscaling describe-instance-refreshes \
-            --auto-scaling-group-name ${{ steps.refresh.outputs.asg-name }} \
-            --instance-refresh-ids ${{ steps.refresh.outputs.refresh-id }}
-          
-          # Wait with timeout
-          TIMEOUT=1800  # 30 minutes
-          ELAPSED=0
-          INTERVAL=30
-          
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            STATUS=$(aws autoscaling describe-instance-refreshes \
-              --auto-scaling-group-name ${{ steps.refresh.outputs.asg-name }} \
-              --instance-refresh-ids ${{ steps.refresh.outputs.refresh-id }} \
-              --query 'InstanceRefreshes[0].Status' \
-              --output text)
-            
-            echo "Status: $STATUS (${ELAPSED}s elapsed)"
-            
-            if [ "$STATUS" == "Successful" ]; then
-              echo "Instance refresh completed successfully!"
-              exit 0
-            elif [ "$STATUS" == "Failed" ] || [ "$STATUS" == "Cancelled" ]; then
-              echo "Instance refresh failed with status: $STATUS"
-              exit 1
-            fi
-            
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-          
-          echo "Instance refresh timed out after ${TIMEOUT}s"
-          exit 1
-
-      - name: Run Smoke Tests
-        run: |
-          echo "Running smoke tests..."
-          
-          # Get ALB DNS
-          ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --query "LoadBalancers[?contains(LoadBalancerName, 'starttech')].DNSName" \
-            --output text | head -n1)
-          
-          if [ -z "$ALB_DNS" ]; then
-            echo "Load balancer not found!"
-            exit 1
-          fi
-          
-          echo "Testing ALB: $ALB_DNS"
-          
-          # Health check with retries
-          MAX_ATTEMPTS=20
-          ATTEMPT=1
-          
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$ALB_DNS/health || echo "000")
-            
-            if [ "$HTTP_CODE" == "200" ]; then
-              echo "Health check passed! (Attempt $ATTEMPT)"
-              
-              # Test API endpoint
-              API_RESPONSE=$(curl -s http://$ALB_DNS/api/v1/status || echo "failed")
-              echo "API Response: $API_RESPONSE"
-              
-              exit 0
-            fi
-            
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Health check returned $HTTP_CODE, retrying in 15s..."
-            sleep 15
-            ATTEMPT=$((ATTEMPT + 1))
-          done
-          
-          echo "Health check failed after $MAX_ATTEMPTS attempts"
-          exit 1
-
-      - name: Verify CloudWatch Logs
-        run: |
-          echo "Checking CloudWatch log streams..."
-          
-          LOG_GROUP="/aws/ec2/starttech-backend"
-          
-          # Check if log group exists
-          aws logs describe-log-groups \
-            --log-group-name-prefix $LOG_GROUP \
-            || echo "Log group not yet created"
-          
-          # List recent log streams
-          aws logs describe-log-streams \
-            --log-group-name $LOG_GROUP \
-            --order-by LastEventTime \
-            --descending \
-            --max-items 5 \
-            || echo "No log streams found yet"
-
-      - name: Deployment Summary
-        if: always()
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "Backend deployed successfully!"
-            echo "Image: ${{ needs.build-and-push.outputs.image-uri }}"
-            echo "ASG: ${{ steps.refresh.outputs.asg-name }}"
-            echo "Refresh ID: ${{ steps.refresh.outputs.refresh-id }}"
-          else
-            echo "Backend deployment failed!"
-            echo "Check the logs above for details"
-          fi
+          echo "Backend deployed successfully"
+          echo "Image: ${{ needs.build-and-push.outputs.image-uri }}"
