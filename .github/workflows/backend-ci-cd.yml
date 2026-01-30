@@ -70,7 +70,7 @@ jobs:
         ports: [ "27017:27017" ]
         env:
           MONGO_INITDB_ROOT_USERNAME: starttech
-          MONGO_INITDB_ROOT_PASSWORD: startech2026
+          MONGO_INITDB_ROOT_PASSWORD: root!
         options: >-
           --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
           --health-interval 10s

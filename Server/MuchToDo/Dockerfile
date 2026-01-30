@@ -7,7 +7,15 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
+# Install swag for generating swagger docs
+RUN go install github.com/swaggo/swag/cmd/swag@latest
+
 COPY . .
+
+# Generate swagger documentation
+RUN swag init -g cmd/api/main.go
+
+# Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags="-w -s" -o main ./cmd/api
 
